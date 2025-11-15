@@ -1,0 +1,173 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Matplotlib Ayarları
+plt.style.use('ggplot')
+plt.rcParams['figure.figsize'] = (12, 6)
+plt.rcParams['figure.dpi'] = 100
+
+print("Gerekli Kütüphaneler yüklendi: Pandas, NumPy, Matplotlib.")
+
+# --- Aşama 1: Veri Yükleme ve Hazırlık (Pandas) ---
+# --------------------------------------------------------------------------------
+
+file_path = r"C:\Users\Bruger\OneDrive\Belgeler\projeyzt\munich.csv"
+
+# Analiz edeceğimiz gerçek sütun adları (CSV dosyanızdakiler)
+GERCEK_TARIH_KOLONU = 'time'
+ANALIZ_KOLONU_1 = 'precipitation_sum (mm)'
+ANALIZ_KOLONU_2 = 'snowfall_sum (cm)'
+
+try:
+    # DÜZELTME 1: sep=';' eklendi (veriler noktalı virgülle ayrıldığı için)
+    df = pd.read_csv(file_path, sep=';')
+    
+    # DÜZELTME 2: 'time' sütununu (küçük harf) datetime formatına çevirme
+    df[GERCEK_TARIH_KOLONU] = pd.to_datetime(df[GERCEK_TARIH_KOLONU], errors='coerce')
+    
+    # Geçersiz tarihleri (NaT) temizleme
+    df.dropna(subset=[GERCEK_TARIH_KOLONU], inplace=True)
+    
+    # Tarih kolonunu index olarak ayarla
+    df.set_index(GERCEK_TARIH_KOLONU, inplace=True)
+    
+    # Eksik değer doldurma (Sayısal kolonlarda Medyan ile)
+    # NaN değerleri 0 ile doldurmak yağış verisi için daha mantıklı olabilir, ama medyan ile devam edelim
+    for col in [ANALIZ_KOLONU_1, ANALIZ_KOLONU_2]:
+        if df[col].isnull().any():
+            median_val = df[col].median()
+            df[col].fillna(median_val, inplace=True)
+            
+    print("Veri Hazırlık Başarılı. Eksik değerler medyan ile dolduruldu.")
+    
+except FileNotFoundError:
+    print(f"Hata: '{file_path}' dosyası bulunamadı.")
+    exit()
+except KeyError:
+    print(f"Hata: CSV dosyasında gerekli sütunlar ('{GERCEK_TARIH_KOLONU}', '{ANALIZ_KOLONU_1}' vb.) bulunamadı.")
+    exit()
+
+
+# Kolonların varlığını kontrol et (TMAX/TMIN yerine yeni kolonlar)
+if ANALIZ_KOLONU_1 not in df.columns or ANALIZ_KOLONU_2 not in df.columns:
+    print(f"Hata: '{ANALIZ_KOLONU_1}' veya '{ANALIZ_KOLONU_2}' kolonları veri setinde bulunamadı.")
+    exit()
+
+# Analiz edilecek kolonları belirle
+data_cols = [ANALIZ_KOLONU_1, ANALIZ_KOLONU_2]
+
+# --- Aşama 2: Keşifsel Veri Analizi (EDA) (Pandas & NumPy) ---
+# --------------------------------------------------------------------------------
+
+print("\n--- Aşama 2: Keşifsel Veri Analizi (EDA) ---")
+
+# 1. Betimleyici İstatistikler
+print("\n1. Yağış ve Kar Verilerinin Betimleyici İstatistikleri:")
+print(df[data_cols].describe().T)
+
+# 2. Yıllık Trend Analizi (Artık Yıllık Toplam Yağış/Kar olarak daha mantıklı)
+# .mean() yerine .sum() kullanarak yıllık toplamları alalım
+df_annual = df[data_cols].resample('Y').sum()
+print("\n2. Yıllık Toplam Yağış/Kar Trendleri (Son 5 Yıl):")
+print(df_annual.tail())
+
+# NumPy ile Yıllık Toplam Yağış artış eğimini hesapla
+years = np.arange(len(df_annual))
+precip_values = df_annual[ANALIZ_KOLONU_1].values
+if len(years) > 1:
+    slope, intercept = np.polyfit(years, precip_values, 1)
+    print(f"Yıllık toplam yağış trendi (eğim): {slope:.2f} mm/yıl")
+else:
+    slope = 0
+
+# 3. Mevsimsellik (Aylık Ortalama Yağış/Kar)
+df['Ay'] = df.index.month
+df_monthly_avg = df.groupby('Ay')[data_cols].mean() # Aylık ortalama
+print("\n3. Aylık Ortalama Yağış/Kar (Mevsimsel Kalıp):")
+print(df_monthly_avg)
+
+
+# --- Aşama 3: Veri Görselleştirme (Matplotlib) ---
+# --------------------------------------------------------------------------------
+
+print("\n--- Aşama 3: Veri Görselleştirme ---")
+
+# 1. Tüm Zaman Serisi (Günlük Yağış)
+plt.figure(figsize=(14, 6))
+plt.plot(df.index, df[ANALIZ_KOLONU_1], label='Günlük Toplam Yağış (mm)', alpha=0.7)
+# Yıllık ortalama trendi (daha yumuşak bir trend için 365 günlük hareketli ortalama)
+df[ANALIZ_KOLONU_1].rolling(365).mean().plot(color='red', linewidth=3, linestyle='--', label='Yıllık Ortalama Trendi')
+plt.title('Münih Günlük Yağış Zaman Serisi ve Yıllık Trend')
+plt.xlabel('Tarih')
+plt.ylabel('Yağış (mm)')
+plt.legend()
+plt.show()
+
+
+# 2. Mevsimsel Kalıp (Aylık Ortalama Yağış - Bar Plot)
+aylar = ['Ocak', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara']
+x = np.arange(len(aylar))
+width = 0.35 
+
+plt.figure(figsize=(12, 6))
+plt.bar(x, df_monthly_avg[ANALIZ_KOLONU_1], width, label='Ort. Yağış (mm)', color='darkcyan')
+plt.title('Aylık Ortalama Yağış (Mevsimsel Kalıp)')
+plt.xlabel('Ay')
+plt.ylabel('Ortalama Yağış (mm)')
+plt.xticks(x, aylar, rotation=45)
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+
+# 3. Aykırı Hava Olayları (Box Plot - Günlük Yağış)
+df['Yıl'] = df.index.year
+# Sadece yağış olan günleri (0'dan büyük) göstermek daha anlamlı olabilir, ama şimdilik tüm veriyi alalım
+years = df['Yıl'].unique().sort_values()
+data_to_plot = [df[df.index.year == year][ANALIZ_KOLONU_1].values for year in years]
+
+plt.figure(figsize=(14, 6))
+plt.boxplot(data_to_plot, 
+            labels=years.astype(str),
+            patch_artist=True,
+            boxprops=dict(facecolor='lightblue', color='blue'),
+            medianprops=dict(color='red', linewidth=2),
+            flierprops=dict(marker='o', markerfacecolor='red', alpha=0.5),
+            showfliers=False # Aşırı yağışlar grafiği okunaksız yapabilir, aykırı değerleri gizle
+           )
+plt.title('Yıllara Göre Günlük Yağış Dağılımı (Aykırı Değer Tespiti)')
+plt.xlabel('Yıl')
+plt.ylabel('Günlük Yağış (mm)')
+plt.grid(axis='y', linestyle='--')
+plt.show()
+
+
+# --- Aşama 4: Raporlama ---
+# --------------------------------------------------------------------------------
+
+print("\n--- Aşama 4: Raporlama ve Özet Bulgular ---")
+    
+# Aykırı Değerler Raporu (Aşırı Yağışlı Günler)
+mean_precip = df[ANALIZ_KOLONU_1].mean()
+std_precip = df[ANALIZ_KOLONU_1].std()
+threshold = mean_precip + 3 * std_precip # 3 standart sapma üzeri
+extreme_events = df[df[ANALIZ_KOLONU_1] > threshold].sort_values(by=ANALIZ_KOLONU_1, ascending=False)
+    
+print("### Proje Özeti: Münih (Munich) Yağış Analizi ###")
+print(f"\n1. İncelenen Dönem: {df.index.min().year} - {df.index.max().year}")
+    
+print(f"\n2. İklimsel Trend Analizi:")
+print(f"Yıllık Toplam Yağış Değişimi (Eğim): {slope:.2f} mm/yıl")
+    
+peak_month_precip = aylar[df_monthly_avg[ANALIZ_KOLONU_1].idxmax() - 1]
+peak_month_precip_val = df_monthly_avg[ANALIZ_KOLONU_1].max()
+print(f"\n3. Mevsimsel Kalıplar:")
+print(f"En Yağışlı Ay (Ortalama): {peak_month_precip} ({peak_month_precip_val:.2f} mm)")
+    
+print(f"\n4. Aykırı Hava Olayları (Aşırı Yağış):")
+if not extreme_events.empty:
+    print(f"Dönemin En Yüksek Günlük Yağışı: {extreme_events[ANALIZ_KOLONU_1].iloc[0]:.2f} mm ({extreme_events.index[0].date()})")
+    print(f"Aşırı Yağışlı Gün Sayısı (Eşik Üzeri): {len(extreme_events)} gün.")
+else:
+    print("Aykırı değer eşiği (3 Standart Sapma) üzerinde aşırı yağış olayı tespit edilmedi.")
